@@ -1,0 +1,8 @@
+{
+  "name": "AI Persona Studio",
+  "description": "A customizable AI chat application where you can define the AI's personality, custom Q&A, and request AI-generated images.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}

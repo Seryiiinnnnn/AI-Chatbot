@@ -1,0 +1,53 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: config
+// Document ID: persona
+// Fields:
+//   - name: string (required)
+//   - description: string (optional)
+//   - prompt: string (required)
+//   - qaPairs: list of objects (required)
+//     - question: string
+//     - answer: string
+//     - imageUrls: list of strings (optional)
+//   - updatedAt: timestamp (optional)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+             (request.auth.token.email == "chongseryin@gmail.com" && request.auth.token.email_verified == true);
+    }
+
+    function isValidPersona(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.prompt is string && data.prompt.size() > 0 && data.prompt.size() < 5000 &&
+             data.qaPairs is list && data.qaPairs.size() <= 50;
+    }
+
+    // Global Config
+    match /config/persona {
+      // Anyone can read the persona config so the app works for all users
+      allow read: if true;
+      
+      // Only the admin (you) can update the configuration
+      allow write: if isAdmin() && isValidPersona(request.resource.data);
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

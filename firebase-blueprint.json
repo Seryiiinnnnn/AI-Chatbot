@@ -1,0 +1,33 @@
+{
+  "entities": {
+    "Persona": {
+      "title": "Persona",
+      "description": "The AI assistant's personality and custom Q&A pairs.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the AI assistant." },
+        "description": { "type": "string", "description": "A brief description of the assistant." },
+        "prompt": { "type": "string", "description": "The system prompt that defines behavior." },
+        "qaPairs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "question": { "type": "string" },
+              "answer": { "type": "string" },
+              "imageUrls": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "prompt", "qaPairs"]
+    }
+  },
+  "firestore": {
+    "/config/persona": {
+      "schema": "Persona",
+      "description": "Global configuration for the AI assistant persona."
+    }
+  }
+}
