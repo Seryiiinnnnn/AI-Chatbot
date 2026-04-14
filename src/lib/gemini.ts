@@ -45,7 +45,7 @@ export async function chatWithAI(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-1.5-flash",
       contents,
       config: {
         systemInstruction,
@@ -76,7 +76,7 @@ export async function chatWithAI(
 async function generateImage(prompt: string): Promise<string> {
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: 'gemini-1.5-flash',
       contents: {
         parts: [{ text: prompt }],
       },

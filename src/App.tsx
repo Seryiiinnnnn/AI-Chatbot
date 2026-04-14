@@ -112,14 +112,21 @@ export default function App() {
   }, []);
 
   // Sync Persona from Firebase
+  const isEditingRef = useRef(false);
+
   useEffect(() => {
     const personaDoc = doc(db, 'config', 'persona');
     const unsubscribe = onSnapshot(personaDoc, (snapshot) => {
       if (snapshot.exists()) {
-        setPersona(snapshot.data() as Persona);
+        const cloudData = snapshot.data() as Persona;
+        // Only update if not currently editing to prevent overwriting local changes
+        if (!isEditingRef.current) {
+          setPersona(cloudData);
+        }
       } else {
-        // Initial setup if doc doesn't exist
-        setPersona(DEFAULT_PERSONA);
+        if (!isEditingRef.current) {
+          setPersona(DEFAULT_PERSONA);
+        }
       }
       setIsConfigLoading(false);
     }, (error) => {
@@ -141,6 +148,7 @@ export default function App() {
         ...persona,
         updatedAt: new Date().toISOString()
       });
+      isEditingRef.current = false; // Reset editing flag after successful save
       alert('配置已成功保存到云端！');
     } catch (error) {
       console.error("Error saving persona:", error);
@@ -297,6 +305,7 @@ export default function App() {
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     transcriptRef.current = '';
+    // Use a local variable for isLoading to avoid race conditions in the UI
     setIsLoading(true);
 
     try {
@@ -366,11 +375,13 @@ export default function App() {
   };
 
   const addQAPair = () => {
+    isEditingRef.current = true;
     const newPair: QAPair = { id: Date.now().toString(), question: '', answer: '' };
     setPersona(prev => ({ ...prev, qaPairs: [...prev.qaPairs, newPair] }));
   };
 
   const updateQAPair = (id: string, field: keyof QAPair, value: string) => {
+    isEditingRef.current = true;
     setPersona(prev => ({
       ...prev,
       qaPairs: prev.qaPairs.map(p => p.id === id ? { ...p, [field]: value } : p)
@@ -417,6 +428,7 @@ export default function App() {
   };
 
   const removeImage = (qaId: string, index: number) => {
+    isEditingRef.current = true;
     setPersona(prev => ({
       ...prev,
       qaPairs: prev.qaPairs.map(p => {
@@ -430,6 +442,7 @@ export default function App() {
   };
 
   const removeQAPair = (id: string) => {
+    isEditingRef.current = true;
     setPersona(prev => ({
       ...prev,
       qaPairs: prev.qaPairs.filter(p => p.id !== id)
@@ -486,7 +499,10 @@ export default function App() {
                   <Input 
                     id="name" 
                     value={persona.name} 
-                    onChange={e => setPersona(prev => ({ ...prev, name: e.target.value }))}
+                    onChange={e => {
+                      isEditingRef.current = true;
+                      setPersona(prev => ({ ...prev, name: e.target.value }));
+                    }}
                     placeholder="例如：小智"
                   />
                 </div>
@@ -495,7 +511,10 @@ export default function App() {
                   <Input 
                     id="desc" 
                     value={persona.description} 
-                    onChange={e => setPersona(prev => ({ ...prev, description: e.target.value }))}
+                    onChange={e => {
+                      isEditingRef.current = true;
+                      setPersona(prev => ({ ...prev, description: e.target.value }));
+                    }}
                     placeholder="例如：活泼开朗、乐于助人"
                   />
                 </div>
@@ -505,7 +524,10 @@ export default function App() {
                     id="prompt" 
                     rows={4}
                     value={persona.systemPrompt} 
-                    onChange={e => setPersona(prev => ({ ...prev, systemPrompt: e.target.value }))}
+                    onChange={e => {
+                      isEditingRef.current = true;
+                      setPersona(prev => ({ ...prev, systemPrompt: e.target.value }));
+                    }}
                     placeholder="告诉AI它应该如何表现..."
                     className="resize-none"
                   />
@@ -848,7 +870,7 @@ export default function App() {
             <Button 
               size="icon" 
               className="h-10 w-10 md:h-12 md:w-12 rounded-xl md:rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex-shrink-0"
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={!input.trim() || isLoading}
             >
               <Send className="w-4 h-4 md:w-5 md:h-5" />
