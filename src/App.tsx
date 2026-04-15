@@ -100,10 +100,25 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('chat');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   
+  // Refs for persistent values to avoid stale closures in event listeners
+  const personaRef = useRef<Persona>(persona);
+  const messagesRef = useRef<Message[]>(messages);
+
+  useEffect(() => { personaRef.current = persona; }, [persona]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const synthesisRef = useRef<SpeechSynthesis | null>(window.speechSynthesis);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+  // Sync Auth State
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
 
   // Local Storage Persistence
   useEffect(() => {
@@ -114,9 +129,6 @@ export default function App() {
       } catch (e) {
         console.error("Failed to parse saved persona", e);
       }
-    } else {
-      // If no saved persona, we use the DEFAULT_PERSONA (factory settings)
-      setPersona(DEFAULT_PERSONA);
     }
     setIsConfigLoading(false);
   }, []);
@@ -141,32 +153,32 @@ export default function App() {
 
   // Flexible Matching Helper
   const findMatchedQA = (text: string) => {
-    const cleanText = text.replace(/[，。？！,.?!]/g, '').toLowerCase().trim();
+    // Remove punctuation and spaces for better Chinese matching
+    const cleanText = text.replace(/[，。？！,.?!\s]/g, '').toLowerCase().trim();
     if (!cleanText) return null;
 
+    const currentPersona = personaRef.current;
+
     // 1. Exact or Substring Match (Highest Priority)
-    const directMatch = persona.qaPairs.find(qa => {
-      const cleanQ = qa.question.replace(/[，。？！,.?!]/g, '').toLowerCase().trim();
+    const directMatch = currentPersona.qaPairs.find(qa => {
+      const cleanQ = qa.question.replace(/[，。？！,.?!\s]/g, '').toLowerCase().trim();
       return cleanText === cleanQ || cleanText.includes(cleanQ) || cleanQ.includes(cleanText);
     });
     if (directMatch) return directMatch;
 
     // 2. Keyword Overlap Match (Fuzzy)
-    // Split into keywords (simple split by space or common Chinese characters)
-    const getKeywords = (s: string) => s.split('').filter(c => !/[的了呢吧啊吗]/.test(c));
+    const getKeywords = (s: string) => s.split('').filter(c => !/[的了呢吧啊吗\s]/.test(c));
     const textKeywords = getKeywords(cleanText);
     
     if (textKeywords.length < 2) return null;
 
-    return persona.qaPairs.find(qa => {
-      const cleanQ = qa.question.replace(/[，。？！,.?!]/g, '').toLowerCase().trim();
+    return currentPersona.qaPairs.find(qa => {
+      const cleanQ = qa.question.replace(/[，。？！,.?!\s]/g, '').toLowerCase().trim();
       const qKeywords = getKeywords(cleanQ);
       
-      // Calculate overlap
       const intersection = qKeywords.filter(k => textKeywords.includes(k));
       const overlapRatio = intersection.length / qKeywords.length;
       
-      // If more than 70% of the predefined question's keywords are present in the user's input
       return overlapRatio >= 0.7;
     });
   };
@@ -184,7 +196,7 @@ export default function App() {
         let finalTranscript = '';
         let interimTranscript = '';
 
-        for (let i = 0; i < event.results.length; ++i) {
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTranscript += event.results[i][0].transcript;
           } else {
@@ -192,7 +204,9 @@ export default function App() {
           }
         }
 
-        const transcript = (finalTranscript || interimTranscript).trim();
+        // On some mobile devices, we need to accumulate results differently
+        // If it's not continuous, results[0] usually contains the whole thing
+        const transcript = (finalTranscript || interimTranscript || event.results[0][0].transcript).trim();
         if (!transcript) return;
 
         transcriptRef.current = transcript;
@@ -205,7 +219,6 @@ export default function App() {
           const matchedQuestion = matchedQA.question;
           transcriptRef.current = ''; // Clear immediately to prevent double-send in onend
           setInput(matchedQuestion);
-          // Small delay to let the user see the text before sending
           setTimeout(() => {
             handleSend(matchedQuestion);
           }, 500);
@@ -302,10 +315,11 @@ export default function App() {
     
     // Prevent duplicate sends of the exact same content in rapid succession
     // (especially common with voice recognition onend + matchedQA triggers)
-    if (messages.length > 0 && 
-        messages[messages.length - 1].role === 'user' && 
-        messages[messages.length - 1].content === messageContent &&
-        Date.now() - messages[messages.length - 1].timestamp < 1000) {
+    const currentMessages = messagesRef.current;
+    if (currentMessages.length > 0 && 
+        currentMessages[currentMessages.length - 1].role === 'user' && 
+        currentMessages[currentMessages.length - 1].content === messageContent &&
+        Date.now() - currentMessages[currentMessages.length - 1].timestamp < 1000) {
       return;
     }
 
@@ -335,8 +349,8 @@ export default function App() {
       }
 
       const responseText = forcedResponse || await chatWithAI(
-        [...messages, userMessage], 
-        persona,
+        [...messagesRef.current, userMessage], 
+        personaRef.current,
         (url) => { 
           // Only override if not already set by custom QA
           if (assistantImageUrls.length === 0) assistantImageUrls = [url]; 
@@ -469,7 +483,7 @@ export default function App() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="text-sm text-neutral-600 leading-relaxed">
+            <p className="text-sm text-neutral-600 leading-relaxed">
               {errorType === 'not-allowed' ? (
                 <>
                   检测到麦克风权限被拒绝。这通常是因为：
@@ -487,7 +501,7 @@ export default function App() {
               ) : (
                 '您的浏览器似乎不支持 Web Speech API。建议使用 Chrome、Edge 或 Safari 浏览器。'
               )}
-            </div>
+            </p>
           </div>
           <div className="flex justify-end">
             <Button onClick={() => setShowErrorDialog(false)} className="bg-indigo-600 hover:bg-indigo-700">
@@ -866,9 +880,7 @@ export default function App() {
                   "absolute right-1 md:right-2 top-1/2 -translate-y-1/2 h-8 w-8 md:h-10 md:w-10 rounded-lg md:rounded-xl transition-all duration-200",
                   isListening ? "text-red-500 bg-red-50 scale-110 shadow-inner" : "text-neutral-400 hover:text-indigo-600"
                 )}
-                onClick={toggleListening}
-                onTouchStart={handleTouchStart}
-                onTouchEnd={handleTouchEnd}
+                onClick={() => toggleListening()}
               >
                 {isListening ? (
                   <div className="relative flex items-center justify-center">
