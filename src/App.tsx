@@ -90,6 +90,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isLongPress, setIsLongPress] = useState(false);
+  const [showErrorDialog, setShowErrorDialog] = useState(false);
+  const [errorType, setErrorType] = useState<'not-allowed' | 'network' | 'no-mic' | null>(null);
   const isLongPressRef = useRef(false);
   const transcriptRef = useRef('');
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
@@ -103,68 +105,27 @@ export default function App() {
   const synthesisRef = useRef<SpeechSynthesis | null>(window.speechSynthesis);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Sync Auth State
+  // Local Storage Persistence
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // Sync Persona from Firebase
-  const isEditingRef = useRef(false);
-
-  useEffect(() => {
-    const personaDoc = doc(db, 'config', 'persona');
-    const unsubscribe = onSnapshot(personaDoc, (snapshot) => {
-      if (snapshot.exists()) {
-        const cloudData = snapshot.data() as Persona;
-        // Only update if not currently editing to prevent overwriting local changes
-        if (!isEditingRef.current) {
-          setPersona(cloudData);
-        }
-      } else {
-        if (!isEditingRef.current) {
-          setPersona(DEFAULT_PERSONA);
-        }
+    const savedPersona = localStorage.getItem('persona_config');
+    if (savedPersona) {
+      try {
+        setPersona(JSON.parse(savedPersona));
+      } catch (e) {
+        console.error("Failed to parse saved persona", e);
       }
-      setIsConfigLoading(false);
-    }, (error) => {
-      console.error("Error fetching persona:", error);
-      setIsConfigLoading(false);
-    });
-    return () => unsubscribe();
+    } else {
+      // If no saved persona, we use the DEFAULT_PERSONA (factory settings)
+      setPersona(DEFAULT_PERSONA);
+    }
+    setIsConfigLoading(false);
   }, []);
 
-  const savePersonaToCloud = async () => {
-    if (!user || user.email !== 'chongseryin@gmail.com') {
-      alert('只有管理员可以保存配置到云端。');
-      return;
+  useEffect(() => {
+    if (!isConfigLoading) {
+      localStorage.setItem('persona_config', JSON.stringify(persona));
     }
-    
-    try {
-      setIsLoading(true);
-      await setDoc(doc(db, 'config', 'persona'), {
-        ...persona,
-        updatedAt: new Date().toISOString()
-      });
-      isEditingRef.current = false; // Reset editing flag after successful save
-      alert('配置已成功保存到云端！');
-    } catch (error) {
-      console.error("Error saving persona:", error);
-      alert('保存失败，请检查权限。');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const login = async () => {
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error("Login failed:", error);
-    }
-  };
+  }, [persona, isConfigLoading]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -177,6 +138,38 @@ export default function App() {
       }
     }
   }, [messages, isLoading]);
+
+  // Flexible Matching Helper
+  const findMatchedQA = (text: string) => {
+    const cleanText = text.replace(/[，。？！,.?!]/g, '').toLowerCase().trim();
+    if (!cleanText) return null;
+
+    // 1. Exact or Substring Match (Highest Priority)
+    const directMatch = persona.qaPairs.find(qa => {
+      const cleanQ = qa.question.replace(/[，。？！,.?!]/g, '').toLowerCase().trim();
+      return cleanText === cleanQ || cleanText.includes(cleanQ) || cleanQ.includes(cleanText);
+    });
+    if (directMatch) return directMatch;
+
+    // 2. Keyword Overlap Match (Fuzzy)
+    // Split into keywords (simple split by space or common Chinese characters)
+    const getKeywords = (s: string) => s.split('').filter(c => !/[的了呢吧啊吗]/.test(c));
+    const textKeywords = getKeywords(cleanText);
+    
+    if (textKeywords.length < 2) return null;
+
+    return persona.qaPairs.find(qa => {
+      const cleanQ = qa.question.replace(/[，。？！,.?!]/g, '').toLowerCase().trim();
+      const qKeywords = getKeywords(cleanQ);
+      
+      // Calculate overlap
+      const intersection = qKeywords.filter(k => textKeywords.includes(k));
+      const overlapRatio = intersection.length / qKeywords.length;
+      
+      // If more than 70% of the predefined question's keywords are present in the user's input
+      return overlapRatio >= 0.7;
+    });
+  };
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -206,12 +199,7 @@ export default function App() {
         setInput(transcript);
         
         // Smart Matching: Check if the recognized speech matches any custom question
-        const cleanTranscript = transcript.replace(/[，。？！,.?!]/g, '').toLowerCase();
-        
-        const matchedQA = persona.qaPairs.find(qa => {
-          const cleanQuestion = qa.question.replace(/[，。？！,.?!]/g, '').toLowerCase();
-          return cleanTranscript === cleanQuestion || cleanTranscript.includes(cleanQuestion);
-        });
+        const matchedQA = findMatchedQA(transcript);
 
         if (matchedQA && event.results[event.results.length - 1].isFinal) {
           const matchedQuestion = matchedQA.question;
@@ -229,6 +217,16 @@ export default function App() {
         console.error('Speech recognition error', event.error);
         setIsListening(false);
         isLongPressRef.current = false;
+        
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          setErrorType('not-allowed');
+          setShowErrorDialog(true);
+        } else if (event.error === 'no-speech') {
+          // Ignore no-speech errors to avoid annoying the user
+        } else if (event.error === 'network') {
+          setErrorType('network');
+          setShowErrorDialog(true);
+        }
       };
 
       recognition.onend = () => {
@@ -244,14 +242,30 @@ export default function App() {
     }
   }, []);
 
-  const toggleListening = (isLongPressMode = false) => {
+  const toggleListening = async (isLongPressMode = false) => {
     if (isListening) {
       recognitionRef.current?.stop();
     } else {
       if (!recognitionRef.current) {
-        alert('您的浏览器不支持语音识别功能。');
+        setErrorType('no-mic');
+        setShowErrorDialog(true);
         return;
       }
+
+      // Proactively check for microphone access if possible
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream.getTracks().forEach(track => track.stop()); // Stop immediately, we just wanted to check
+        }
+      } catch (err: any) {
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          setErrorType('not-allowed');
+          setShowErrorDialog(true);
+          return;
+        }
+      }
+
       try {
         transcriptRef.current = '';
         isLongPressRef.current = isLongPressMode;
@@ -312,11 +326,8 @@ export default function App() {
       let assistantImageUrls: string[] = [];
       let forcedResponse: string | undefined;
       
-      // Check if the input matches a custom Q&A with images
-      const matchedQA = persona.qaPairs.find(qa => 
-        messageContent.trim().toLowerCase() === qa.question.trim().toLowerCase() ||
-        messageContent.trim().toLowerCase().includes(qa.question.trim().toLowerCase())
-      );
+      // Check if the input matches a custom Q&A with images (using fuzzy matching)
+      const matchedQA = findMatchedQA(messageContent);
       
       if (matchedQA) {
         assistantImageUrls = matchedQA.imageUrls || [];
@@ -375,13 +386,11 @@ export default function App() {
   };
 
   const addQAPair = () => {
-    isEditingRef.current = true;
     const newPair: QAPair = { id: Date.now().toString(), question: '', answer: '' };
     setPersona(prev => ({ ...prev, qaPairs: [...prev.qaPairs, newPair] }));
   };
 
   const updateQAPair = (id: string, field: keyof QAPair, value: string) => {
-    isEditingRef.current = true;
     setPersona(prev => ({
       ...prev,
       qaPairs: prev.qaPairs.map(p => p.id === id ? { ...p, [field]: value } : p)
@@ -428,7 +437,6 @@ export default function App() {
   };
 
   const removeImage = (qaId: string, index: number) => {
-    isEditingRef.current = true;
     setPersona(prev => ({
       ...prev,
       qaPairs: prev.qaPairs.map(p => {
@@ -442,7 +450,6 @@ export default function App() {
   };
 
   const removeQAPair = (id: string) => {
-    isEditingRef.current = true;
     setPersona(prev => ({
       ...prev,
       qaPairs: prev.qaPairs.filter(p => p.id !== id)
@@ -451,6 +458,45 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-neutral-50 text-neutral-900 font-sans overflow-hidden relative">
+      {/* Error Dialog for Speech Recognition */}
+      <Dialog open={showErrorDialog} onOpenChange={setShowErrorDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <MicOff className="w-5 h-5" />
+              {errorType === 'not-allowed' ? '麦克风访问受限' : 
+               errorType === 'network' ? '网络连接错误' : '功能不受支持'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="text-sm text-neutral-600 leading-relaxed">
+              {errorType === 'not-allowed' ? (
+                <>
+                  检测到麦克风权限被拒绝。这通常是因为：
+                  <ul className="list-disc list-inside mt-2 space-y-1">
+                    <li>您在浏览器弹窗中点击了“拒绝”</li>
+                    <li>浏览器设置中禁用了此网站的麦克风访问</li>
+                    <li>由于安全策略，iFrame 内的语音功能被限制</li>
+                  </ul>
+                  <div className="mt-4 p-3 bg-indigo-50 rounded-lg text-indigo-700 font-medium">
+                    💡 建议：点击右上角“在新标签页打开”图标，在独立页面中重新尝试。
+                  </div>
+                </>
+              ) : errorType === 'network' ? (
+                '语音识别需要稳定的网络连接，请检查您的网络设置后重试。'
+              ) : (
+                '您的浏览器似乎不支持 Web Speech API。建议使用 Chrome、Edge 或 Safari 浏览器。'
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={() => setShowErrorDialog(false)} className="bg-indigo-600 hover:bg-indigo-700">
+              我知道了
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Mobile Overlay for Sidebar */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -500,7 +546,6 @@ export default function App() {
                     id="name" 
                     value={persona.name} 
                     onChange={e => {
-                      isEditingRef.current = true;
                       setPersona(prev => ({ ...prev, name: e.target.value }));
                     }}
                     placeholder="例如：小智"
@@ -512,7 +557,6 @@ export default function App() {
                     id="desc" 
                     value={persona.description} 
                     onChange={e => {
-                      isEditingRef.current = true;
                       setPersona(prev => ({ ...prev, description: e.target.value }));
                     }}
                     placeholder="例如：活泼开朗、乐于助人"
@@ -525,7 +569,6 @@ export default function App() {
                     rows={4}
                     value={persona.systemPrompt} 
                     onChange={e => {
-                      isEditingRef.current = true;
                       setPersona(prev => ({ ...prev, systemPrompt: e.target.value }));
                     }}
                     placeholder="告诉AI它应该如何表现..."
@@ -619,42 +662,12 @@ export default function App() {
         </div>
         
         <div className="p-4 border-t bg-neutral-50/80 space-y-2">
-          {user ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <span className="text-[10px] text-neutral-500 font-medium truncate max-w-[150px]">
-                  已登录: {user.email}
-                </span>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  className="h-6 text-[10px] text-neutral-500 hover:text-red-500"
-                  onClick={() => auth.signOut()}
-                >
-                  退出
-                </Button>
-              </div>
-              <Button 
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-md gap-2" 
-                onClick={savePersonaToCloud}
-                disabled={isLoading}
-              >
-                <Save className="w-4 h-4" />
-                {isLoading ? '正在保存...' : '保存到云端'}
-              </Button>
-            </div>
-          ) : (
-            <Button 
-              className="w-full bg-white hover:bg-neutral-50 text-neutral-900 border border-neutral-200 shadow-sm gap-2" 
-              onClick={login}
-            >
-              <User className="w-4 h-4" />
-              登录以保存到云端
-            </Button>
-          )}
           <Button variant="outline" className="w-full border-neutral-200" onClick={() => setIsSidebarOpen(false)}>
             完成设置
           </Button>
+          <p className="text-[10px] text-center text-neutral-400">
+            设置已自动保存至本地
+          </p>
         </div>
       </motion.aside>
       )}
