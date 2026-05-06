@@ -96,11 +96,11 @@ const DEFAULT_PERSONA: Persona = {
       question: "那在世人眼中 诸葛亮究竟是怎样的人", 
       answer: "诸葛亮被认为是智慧与谋略的象征，在历史，文学与影视作品中，诸葛亮的形象广为流传。",
       imageUrls: [
-        "https://img.sanishtech.com/u/73a916a1b16d4e943dc5f0633e127922.jpg",
-        "https://img.sanishtech.com/u/7c0370edf35855328d491d1fc4d03513.jpg",
-        "https://img.sanishtech.com/u/8c4042cff824143bb706a39b85118c09.jpg",
-        "https://img.sanishtech.com/u/8af0abdeb10e2986a44ef4891da4cc02.jpg",
-        "https://img.sanishtech.com/u/e6725869287a90a30a3980f4c5213581.jpg"
+        "https://img.remit.ee/api/file/BQACAgUAAyEGAASHRsPbAAET7-dp-2-4cGM2diuMcdYAAVjLErIUzzoAAkokAAKdIthXtxIlB0cJM5M7BA.jpg",
+        "https://img.remit.ee/api/file/BQACAgUAAyEGAASHRsPbAAET7-hp-2_VxDU7_sY-ySS7O1ucsgABBpQAAkskAAKdIthXwoFdU_WCBNE7BA.jpg",
+        "https://img.remit.ee/api/file/BQACAgUAAyEGAASHRsPbAAET7-lp-2_uNUowstMHtLD7YyO3cKBF3AACTCQAAp0i2Fef4NnYV-XL0jsE.jpg",
+        "https://img.remit.ee/api/file/BQACAgUAAyEGAASHRsPbAAET7-pp-2_8gh-zhJ1mgiCpZ0hSwrZVIQACTSQAAp0i2Fc0HN6ZGQWw4TsE.jpg",
+        "https://img.remit.ee/api/file/BQACAgUAAyEGAASHRsPbAAET7-tp-3AOa4UmsZapAAGNQLv_3OKXHfkAAk4kAAKdIthXMFIMCjd2jdk7BA.jpg"
       ]
     }
   ]
